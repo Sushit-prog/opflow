@@ -33,6 +33,19 @@ class Settings(BaseSettings):
     # credentials and MUST come from .env / the environment - never hardcode it.
     database_url: str
 
+    # M6: the tool-calling agent (INTERFACES.md §5) calls DeepSeek V4 through
+    # OpenRouter's OpenAI-compatible API. The key MUST come from .env / the
+    # environment - never hardcode it. Optional at runtime: the agent path is
+    # only exercised when a worker actually runs a low_stock_reorder job, and
+    # the test suite injects a fake LLM, so the app must not fail at startup
+    # when the key is absent.
+    openrouter_api_key: str | None = None
+    # Model slug on OpenRouter, env-overridable. "deepseek/deepseek-v4-flash"
+    # is the stable unversioned slug (versioned builds exist, e.g.
+    # deepseek/deepseek-v4-flash-0731); pin a versioned slug in prod if the
+    # unversioned one's behavior must never drift.
+    openrouter_model: str = "deepseek/deepseek-v4-flash"
+
 
 @lru_cache
 def get_settings() -> Settings:
