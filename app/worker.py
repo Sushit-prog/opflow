@@ -5,16 +5,18 @@ resume), poll due 'pending'/'retrying' jobs, claim each with the atomic
 UPDATE guard, run the executor, then complete the job (success / retry /
 failed).
 
-execute_job is a CONTROLLABLE STUB for M4 - it exists to prove the
-crash-resume idempotency story using existing tables, no migration:
+execute_job is a CONTROLLABLE STUB for M4/M5 - it proves the crash-resume
+idempotency story against the real tables, no migration:
 
     - default: success, no side effect
-    - payload {"_fail": truthy}      -> raise RuntimeError("stub failure")
-    - payload {"_action": "insert_po"} -> idempotent purchase_orders insert
-      keyed on created_by_job_id == job.id (second call is a no-op)
+    - payload {"_fail": truthy}          -> raise RuntimeError("stub failure")
+    - payload {"_action": "insert_po"}  -> REAL create_purchase_order call
+      through the Capability Gate (app.gate.call_tool), keyed on
+      created_by_job_id == job.id, so a re-run is an idempotent no-op. The
+      gate also writes the audit_log row for the call.
 
-M5 replaces execute_job with the real capability-gated create_purchase_order
-tool; M6 adds the agent. Nothing here talks to external services.
+M6 replaces execute_job with the capability-gated agent. Nothing here talks
+to external services (notify_vendor stays log-only).
 
 Sessions are injected explicitly - no hidden global state.
 """
@@ -26,16 +28,18 @@ from datetime import timedelta
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.gate import call_tool
 from app.jobs import claim_job, complete_job
-from app.models import InventoryItem, Job, PurchaseOrder
+from app.models import InventoryItem, Job
 
 
 def execute_job(session: Session, job: Job) -> None:
-    """M4 stub executor. See module docstring for the controllable behaviors.
+    """M4/M5 stub executor. See module docstring for the controllable behaviors.
 
-    The 'insert_po' branch proves crash-resume idempotency against the real
-    purchase_orders table: the side effect is keyed on created_by_job_id, so
-    re-running a job whose PO already committed is a no-op.
+    The 'insert_po' branch now goes through the real Capability Gate: the PO
+    side effect is keyed on created_by_job_id, so re-running a job whose PO
+    already committed is an idempotent no-op (proved by the crash-resume
+    test), and every call writes its audit_log row.
     """
     payload = job.payload or {}
 
@@ -43,25 +47,24 @@ def execute_job(session: Session, job: Job) -> None:
         raise RuntimeError("stub failure")
 
     if payload.get("_action") == "insert_po":
-        existing = session.scalar(
-            select(PurchaseOrder).where(PurchaseOrder.created_by_job_id == job.id)
-        )
-        if existing is None:
-            item = session.get(InventoryItem, job.inventory_item_id)
-            if item is None:  # pragma: no cover - test constructs valid items
-                raise RuntimeError(
-                    f"execute_job: inventory_item_id {job.inventory_item_id} not found"
-                )
-            session.add(
-                PurchaseOrder(
-                    vendor_id=item.vendor_id,
-                    inventory_item_id=item.id,
-                    quantity=item.reorder_quantity,
-                    status="draft",
-                    created_by_job_id=job.id,
-                )
+        item = session.get(InventoryItem, job.inventory_item_id)
+        if item is None:  # pragma: no cover - test constructs valid items
+            raise RuntimeError(
+                f"execute_job: inventory_item_id {job.inventory_item_id} not found"
             )
-            session.commit()
+        call_tool(
+            session,
+            job_id=job.id,
+            process_type_id=job.process_type_id,
+            tool_name="create_purchase_order",
+            tool_input={
+                "vendor_id": item.vendor_id,
+                "inventory_item_id": item.id,
+                "quantity": item.reorder_quantity,
+                "created_by_job_id": job.id,
+            },
+            decision_reasoning="execute_job: item below reorder threshold",
+        )
     # default: success, no side effect
 
 

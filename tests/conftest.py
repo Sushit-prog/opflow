@@ -72,13 +72,14 @@ def seeded(migrate: Callable[[str], None], engine: Engine) -> bool:
 def clean_jobs(engine: Engine) -> None:
     """Delete all jobs rows before a test so job counts are deterministic.
 
-    purchase_orders.created_by_job_id FK-references jobs.id, so purchase_orders
-    rows must go first (FK-safe delete order). Separately auto-commits so the
-    truncation wrapper persists the cleanup.
+    audit_log.job_id and purchase_orders.created_by_job_id both FK-reference
+    jobs.id, so those rows must go first (FK-safe delete order). Separately
+    auto-commits so the truncation wrapper persists the cleanup.
     """
     from sqlalchemy import text
 
     with engine.connect() as conn:
+        conn.execute(text("DELETE FROM audit_log"))
         conn.execute(text("DELETE FROM purchase_orders"))
         conn.execute(text("DELETE FROM jobs"))
         conn.commit()
