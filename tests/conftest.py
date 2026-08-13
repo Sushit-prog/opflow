@@ -66,3 +66,16 @@ def seeded(migrate: Callable[[str], None], engine: Engine) -> bool:
     with Session(engine) as session:
         seed_all(session)
     return True
+
+
+@pytest.fixture
+def clean_jobs(engine: Engine) -> None:
+    """Delete all jobs rows before a test so job counts are deterministic.
+
+    Separately auto-commits so the trancation wrapper persists the cleanup.
+    """
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM jobs"))
+        conn.commit()
