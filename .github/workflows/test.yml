@@ -1,0 +1,59 @@
+# CI for OpFlow (M8).
+#
+# Runs the full integration suite against a REAL Postgres 16 service
+# container on every PR (and on pushes to main) - never SQLite: the schema
+# uses Postgres-specific JSONB, and M4's concurrency-guard test depends on
+# real row-locking behavior.
+#
+# Lint / type-check: NOT configured. The repo has no linter or type checker
+# pinned (no ruff/flake8/mypy/pyright in pyproject or tool configs), so
+# per project policy we do not silently add one here. When one is added,
+# extend the steps below.
+#
+# The DB URL mirrors docker-compose.yml (postgres:16, user/db `opflow`) on
+# the container's default port 5432. Alembic reads DATABASE_URL from the
+# environment, so `alembic upgrade head` runs the same migrations the local
+# test harness applies (tests/integration conftest.py).
+name: CI
+
+"on":
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: opflow
+          POSTGRES_PASSWORD: opflow
+          POSTGRES_DB: opflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U opflow -d opflow"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://opflow:opflow@localhost:5432/opflow
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Apply Alembic migrations (mirrors local setup)
+        run: alembic upgrade head
+
+      - name: Integration tests against real Postgres
+        run: pytest tests/integration -v
