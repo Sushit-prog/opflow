@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: opflow-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: opflow
+      POSTGRES_PASSWORD: REDACTED
+      POSTGRES_DB: opflow
+    ports:
+      - "5433:5432"
+    # NOTE: host port remapped to 5433 — the native Windows postgresql-x64-18
+    # service already owns 5432 on the dev machine and can't be stopped
+    # without admin. This is a Phase-0-only environment deviation, documented
+    # here rather than silently changed. DATABASE_URL default must point at
+    # 5433, not 5432, to match.
+    volumes:
+      - opflow_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opflow -d opflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # app service — uncomment once M1 scaffold produces a Dockerfile.
+  # Left out at Phase 0 so `docker compose up` gives a clean DB
+  # without requiring app code to exist yet.
+  #
+  # app:
+  #   build: .
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #   environment:
+  #     DATABASE_URL: postgresql+psycopg://opflow:REDACTED@db:5432/opflow
+  #   ports:
+  #     - "8000:8000"
+
+volumes:
+  opflow_pgdata:
