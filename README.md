@@ -9,14 +9,6 @@ The full pipeline is implemented and tested (M1–M8): poller → idempotent job
 queue → atomic claim → agent → capability gate → audit log → crash-resume
 retries — all behind a real Postgres, with CI on every PR.
 
-## Honest build provenance
-
-This project is being built with **Cline (VS Code) + DeepSeek V4 as the AI
-coding agent**, acting as the implementation engineer, with a human acting as
-architect/reviewer. The architecture, DDL, and interfaces are specified in
-`opflow-spec.md` / `INTERFACES.md` (source of truth) and are **not**
-redesigned by the agent.
-
 ## Tech stack
 
 - Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Pydantic v2, httpx
