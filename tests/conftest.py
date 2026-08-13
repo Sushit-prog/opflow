@@ -72,10 +72,44 @@ def seeded(migrate: Callable[[str], None], engine: Engine) -> bool:
 def clean_jobs(engine: Engine) -> None:
     """Delete all jobs rows before a test so job counts are deterministic.
 
-    Separately auto-commits so the trancation wrapper persists the cleanup.
+    purchase_orders.created_by_job_id FK-references jobs.id, so purchase_orders
+    rows must go first (FK-safe delete order). Separately auto-commits so the
+    truncation wrapper persists the cleanup.
     """
     from sqlalchemy import text
 
     with engine.connect() as conn:
+        conn.execute(text("DELETE FROM purchase_orders"))
         conn.execute(text("DELETE FROM jobs"))
         conn.commit()
+
+
+@pytest.fixture
+def make_job(engine: Engine, seeded: bool) -> Callable[..., Job]:
+    """Factory that inserts a jobs row directly (bypassing the poller).
+
+    Returns a callable ``make_job(**job_fields) -> Job``. process_type_id
+    defaults to the seeded low_stock_reorder process type; status defaults to
+    'pending'. Any Job column can be overridden via kwargs.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from app.models import Job, ProcessType
+
+    def _make(**kwargs: object) -> Job:
+        with Session(engine) as session:
+            if "process_type_id" not in kwargs:
+                kwargs["process_type_id"] = session.scalar(
+                    select(ProcessType.id).where(
+                        ProcessType.name == "low_stock_reorder"
+                    )
+                )
+            kwargs.setdefault("status", "pending")
+            job = Job(**kwargs)
+            session.add(job)
+            session.commit()
+            session.refresh(job)
+            return job
+
+    return _make
