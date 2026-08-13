@@ -29,6 +29,7 @@ docker compose up -d db          # start Postgres (host port 5433 in Phase 0)
 python -m venv .venv             # once
 .venv\Scripts\python -m pip install -e ".[dev]"
 .venv\Scripts\alembic upgrade head
+.venv\Scripts\python scripts/seed.py     # idempotent demo seed (vendors + items)
 .venv\Scripts\python -m pytest tests/integration
 ```
 

@@ -49,3 +49,20 @@ def engine(database_url: str) -> Engine:
         yield eng
     finally:
         eng.dispose()
+
+
+@pytest.fixture(scope="session")
+def seeded(migrate: Callable[[str], None], engine: Engine) -> bool:
+    """Apply migrations and seed the demo dataset (idempotent).
+
+    ``seed_all`` upserts by natural key (vendor by email, item by sku) and
+    never duplicates, so it is safe to run at session scope on a fresh DB.
+    """
+    migrate("head")
+    from sqlalchemy.orm import Session
+
+    from app.seed import seed_all
+
+    with Session(engine) as session:
+        seed_all(session)
+    return True
