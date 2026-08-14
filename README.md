@@ -6,7 +6,7 @@ manufacturer, fluid sealing products).
 
 Concrete v1 use case: when an inventory item drops below its reorder
 threshold, a background worker drafts a purchase order and notifies the
-vendor — via a capability-gated tool-calling agent (DeepSeek V4 via
+vendor via a capability-gated tool-calling agent (DeepSeek V4 via
 OpenRouter), not hardcoded if/else logic.
 
 The full pipeline is implemented and tested (M1–M8 + hardening): poller →
@@ -34,11 +34,6 @@ not code; the queue is a real DB-backed `jobs` table with a unique
 `idempotency_key`; and the agent performs real, audited side effects through a
 capability gate that whitelists tools per process type. This is deliberately
 **not** built on SOPVM — it is a standalone repo purpose-built for this JD.
-
-**Build provenance (honest):** implemented with Cline (VS Code) + DeepSeek V4
-as the AI coding agent, with a human acting as architect/reviewer. The
-architecture, DDL, and interfaces are specified in `opflow-spec.md` /
-`INTERFACES.md` (source of truth) and are **not** redesigned by the agent.
 
 ---
 
