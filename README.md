@@ -42,7 +42,7 @@ capability gate that whitelists tools per process type. This is deliberately
 ```mermaid
 flowchart LR
     subgraph Scheduler
-        POLLER[Poller<br/>app/poller.py] -->|sha256(process_type:item:date)| ENQ[enqueue_job<br/>ON CONFLICT DO NOTHING]
+        POLLER[Poller<br/>app/poller.py] -->|"sha256(process_type, item, date)"| ENQ[enqueue_job<br/>ON CONFLICT DO NOTHING]
         ENQ -->|INSERT| JOBS[(jobs<br/>idempotency_key UNIQUE<br/>+ immutability trigger)]
     end
 
@@ -54,7 +54,7 @@ flowchart LR
     AGENT -->|fresh snapshot| GATE[Capability Gate<br/>app/gate.py<br/>checks allowed_tools]
     GATE -->|query_inventory| TOOLS[app/tools.py]
     GATE -->|create_purchase_order| TOOLS
-    GATE -->|notify_vendor (log-only)| TOOLS
+    GATE -->|"notify_vendor (log-only)"| TOOLS
     TOOLS -->|INSERT| PO[(purchase_orders)]
     GATE -->|every call audited| AUDIT[(audit_log<br/>tool, input, output, reasoning)]
 
