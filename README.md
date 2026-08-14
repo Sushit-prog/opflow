@@ -62,6 +62,12 @@ flowchart LR
     AGENT -->|POST /v1/chat/completions| OR[OpenRouter<br/>DeepSeek V4]
 ```
 
+
+
+https://github.com/user-attachments/assets/a697abdd-b82d-4826-bdb0-4bb56d452a89
+
+
+
 Key properties:
 
 - **Poller is read-only** against inventory; it only ever INSERTs into `jobs`.
