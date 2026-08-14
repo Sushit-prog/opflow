@@ -2,7 +2,7 @@
 
 A schema-driven operations-automation backend. Concrete v1 use case: when an
 inventory item drops below its reorder threshold, a background worker drafts
-a purchase order and notifies the vendor — via a capability-gated tool-calling
+a purchase order and notifies the vendor via a capability-gated tool-calling
 agent (DeepSeek V4 via OpenRouter), not hardcoded if/else logic.
 
 The full pipeline is implemented and tested (M1–M8): poller → idempotent job
