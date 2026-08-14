@@ -23,9 +23,11 @@ import logging
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.errors import (
+    InvalidJobReference,
     InvalidQuantity,
     ItemNotFound,
     PONotFound,
@@ -87,7 +89,9 @@ def create_purchase_order(
 ) -> dict[str, Any]:
     """Draft a purchase order (§1).
 
-    Errors: VendorNotFound, ItemNotFound, InvalidQuantity.
+    Errors: VendorNotFound, ItemNotFound, InvalidQuantity, InvalidJobReference
+    (raised when created_by_job_id is malformed - e.g. an injection-style
+    string the DB rejects before any row is touched).
 
     Idempotency (the crash-resume safety mechanism): if a purchase_orders row
     already exists with created_by_job_id == the input, return THAT row instead
@@ -109,11 +113,20 @@ def create_purchase_order(
     if item is None:
         raise ItemNotFound(inventory_item_id=inventory_item_id)
 
-    existing = session.scalar(
-        select(PurchaseOrder).where(
-            PurchaseOrder.created_by_job_id == created_by_job_id
+    try:
+        existing = session.scalar(
+            select(PurchaseOrder).where(
+                PurchaseOrder.created_by_job_id == created_by_job_id
+            )
         )
-    )
+    except ProgrammingError as exc:
+        # Malformed created_by_job_id (e.g. "1; DROP TABLE jobs; --") is
+        # rejected by Postgres before any row is touched (operator does not
+        # exist: integer = character varying). Roll back the aborted
+        # transaction so the caller (the gate) can still audit, then surface
+        # a clean domain error instead of the raw driver exception.
+        session.rollback()
+        raise InvalidJobReference(created_by_job_id) from exc
     if existing is not None:
         return {
             "id": existing.id,

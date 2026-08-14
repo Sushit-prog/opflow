@@ -7,6 +7,8 @@ Covers:
 - test_agent_uses_fresh_inventory_snapshot_not_stale_payload
 - test_agent_decision_to_skip_does_not_call_tools
 
+(Prompt-injection resistance lives in tests/adversarial/test_security.py.)
+
 The LLM call itself is MOCKED (a fake llm_fn injected into run_agent) - no
 live API calls in the test suite. Everything downstream of the agent's
 decision - the fresh query_inventory read, the PO insert, notify_vendor, and

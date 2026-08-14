@@ -61,6 +61,21 @@ EXPECTED_INDEXES: set[tuple[str, str]] = {
     ("audit_log", "idx_audit_job"),
 }
 
+# --- Trigger from migration 0002 (jobs.idempotency_key immutability) ---------
+# The drift check queries pg_get_triggerdef() and asserts the live trigger
+# renders exactly the DDL the migration file commits (name, timing, event,
+# row-level, WHEN clause, and the raising function). The exact string below
+# is Postgres' canonical render of the migration's CREATE TRIGGER (captured
+# from a clean run of migration 0002) - schema-qualified table, doubled
+# parens around the WHEN expression, lowercase new/old rows.
+EXPECTED_TRIGGER_DEF: str = (
+    "CREATE TRIGGER jobs_idempotency_key_immutable "
+    "BEFORE UPDATE ON public.jobs "
+    "FOR EACH ROW "
+    "WHEN ((new.idempotency_key IS DISTINCT FROM old.idempotency_key)) "
+    "EXECUTE FUNCTION jobs_idempotency_key_immutable()"
+)
+
 _TABLES_SQL = text(
     "SELECT table_name FROM information_schema.tables "
     "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
@@ -74,6 +89,15 @@ _CONSTRAINTS_SQL = text(
 )
 _INDEXES_SQL = text(
     "SELECT tablename, indexname FROM pg_indexes WHERE schemaname = 'public'"
+)
+_TRIGGERS_SQL = text(
+    "SELECT pg_get_triggerdef(t.oid) "
+    "FROM pg_trigger t "
+    "JOIN pg_class c ON c.oid = t.tgrelid "
+    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE n.nspname = 'public' "
+    "AND NOT t.tgisinternal "
+    "AND t.tgname = 'jobs_idempotency_key_immutable'"
 )
 
 
@@ -110,3 +134,15 @@ def test_migrations_create_schema(
         }
         missing_indexes = EXPECTED_INDEXES - actual_indexes
         assert not missing_indexes, f"missing indexes: {sorted(missing_indexes)}"
+
+        # --- jobs.idempotency_key immutability trigger (migration 0002) ---
+        trigger_defs = [row[0] for row in conn.execute(_TRIGGERS_SQL)]
+        assert len(trigger_defs) == 1, (
+            f"expected exactly one jobs_idempotency_key_immutable trigger, "
+            f"got {len(trigger_defs)}"
+        )
+        assert trigger_defs[0] == EXPECTED_TRIGGER_DEF, (
+            f"trigger drift: live def does not match migration file.\n"
+            f"live:      {trigger_defs[0]}\n"
+            f"migration: {EXPECTED_TRIGGER_DEF}"
+        )

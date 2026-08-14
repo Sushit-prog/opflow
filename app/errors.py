@@ -80,6 +80,26 @@ class InvalidQuantity(OpFlowError):
         return {**super().to_dict(), "quantity": self.quantity}
 
 
+class InvalidJobReference(OpFlowError):
+    """created_by_job_id is not a usable job reference.
+
+    Raised when the value cannot be compared against the integer
+    purchase_orders.created_by_job_id column at all (e.g. a malformed /
+    injection-style string) - the DB rejects it before any row is touched.
+    """
+
+    code = "InvalidJobReference"
+
+    def __init__(self, created_by_job_id: Any) -> None:
+        self.created_by_job_id = created_by_job_id
+        super().__init__(
+            f"invalid job reference: created_by_job_id={created_by_job_id!r}"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**super().to_dict(), "created_by_job_id": self.created_by_job_id}
+
+
 class ToolNotWhitelisted(OpFlowError):
     code = "ToolNotWhitelisted"
 

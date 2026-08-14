@@ -5,14 +5,17 @@ Covers:
 - test_poller_idempotent_on_rerun          (load-bearing idempotency proof)
 - test_poller_ignores_items_above_threshold
 - test_poller_does_not_mutate_inventory    (byte-identical before/after)
+- test_jobs_idempotency_key_immutable_trigger (migration 0002: direct UPDATE
+  of idempotency_key is rejected by the DB)
 
 All hit Postgres via the `seeded` + `clean_jobs` fixtures - never mocked.
 """
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text, update
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.models import InventoryItem, Job, ProcessType
@@ -145,3 +148,66 @@ def test_poller_process_type_resolves_by_name(seeded: bool, engine: Engine) -> N
 
     assert pt_id is not None
     assert jobs and all(rid == pt_id for rid in resolved_ids)
+
+
+@pytest.mark.integration
+def test_jobs_idempotency_key_immutable_trigger(
+    seeded: bool, engine: Engine
+) -> None:
+    """A direct UPDATE of jobs.idempotency_key is rejected by the DB trigger.
+
+    Migration 0002 adds a BEFORE UPDATE ... WHEN (NEW.idempotency_key IS
+    DISTINCT FROM OLD.idempotency_key) trigger that raises, so the poller's
+    deterministic dedup key can never be tampered with behind its back (the
+    duplicate-job attack proven in scripts/injection_check.py). Updates to
+    OTHER columns must still work - the WHEN clause only fires on key change.
+    """
+    with Session(engine) as session:
+        pt_id = session.scalar(
+            select(ProcessType.id).where(ProcessType.name == "low_stock_reorder")
+        )
+        job = Job(
+            process_type_id=pt_id,
+            idempotency_key="trigger-immutability-probe",
+            status="pending",
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        job_id = job.id
+        original_key = job.idempotency_key
+
+    # --- direct UPDATE of idempotency_key must fail at the DB level --------
+    with Session(engine) as session:
+        with pytest.raises(ProgrammingError) as excinfo:
+            session.execute(
+                update(Job)
+                .where(Job.id == job_id)
+                .values(idempotency_key="tampered-key")
+            )
+            session.commit()
+        session.rollback()
+    assert "immutable" in str(excinfo.value).lower(), (
+        f"expected the immutability error, got: {excinfo.value}"
+    )
+
+    # the row must be unchanged after the rejected update
+    with Session(engine) as session:
+        row = session.get(Job, job_id)
+        assert row is not None
+        assert row.idempotency_key == original_key, "key must survive the rejected update"
+
+    # --- updates to OTHER columns must still succeed ------------------------
+    with Session(engine) as session:
+        session.execute(
+            update(Job).where(Job.id == job_id).values(attempts=2)
+        )
+        session.commit()
+        row = session.get(Job, job_id)
+        assert row.attempts == 2, "non-key updates must not be blocked"
+        assert row.idempotency_key == original_key
+
+    # cleanup so the next run starts from the same state
+    with Session(engine) as session:
+        session.execute(text("DELETE FROM jobs WHERE id = :id"), {"id": job_id})
+        session.commit()

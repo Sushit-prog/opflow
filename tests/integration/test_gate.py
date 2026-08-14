@@ -20,7 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from app.errors import ToolNotWhitelisted
+from app.errors import InvalidJobReference, ToolNotWhitelisted
 from app.gate import call_tool
 from app.models import AuditLog, InventoryItem, Job, PurchaseOrder, Vendor
 
@@ -200,3 +200,66 @@ def test_create_purchase_order_idempotent_on_same_job_id(
 
     # each call audited exactly once
     assert _audit_count(engine, job.id) == 2
+
+
+@pytest.mark.integration
+def test_create_purchase_order_rejects_malformed_job_id(
+    seeded: bool, clean_jobs: None, engine: Engine, make_job: MakeJob
+) -> None:
+    """A malformed created_by_job_id raises InvalidJobReference, not a raw
+    psycopg ProgrammingError, and the rejection is audited as structured JSON.
+
+    Regression for the adversarial case found in injection_check.py:
+    create_purchase_order(created_by_job_id="1; DROP TABLE jobs; --") used to
+    let sqlalchemy.exc.ProgrammingError (psycopg.errors.UndefinedFunction)
+    escape. It must surface as the clean domain error instead - and, because
+    InvalidJobReference is an OpFlowError, the gate audits it with the
+    structured to_dict() payload rather than a generic InternalError.
+    """
+    with Session(engine) as session:
+        item = session.scalar(select(InventoryItem).order_by(InventoryItem.id).limit(1))
+        vendor = session.get(Vendor, item.vendor_id)
+    assert item is not None and vendor is not None, "precondition: seed data"
+
+    job = make_job(idempotency_key="m5-malformed-job-id-1")
+
+    malformed = "1; DROP TABLE jobs; --"
+    with Session(engine) as session:
+        with pytest.raises(InvalidJobReference) as excinfo:
+            call_tool(
+                session,
+                job_id=job.id,
+                process_type_id=job.process_type_id,
+                tool_name="create_purchase_order",
+                tool_input={
+                    "vendor_id": vendor.id,
+                    "inventory_item_id": item.id,
+                    "quantity": 5,
+                    "created_by_job_id": malformed,
+                },
+                decision_reasoning="test: malformed job id must fail cleanly",
+            )
+
+    assert excinfo.value.created_by_job_id == malformed
+    assert excinfo.value.to_dict() == {
+        "error": "InvalidJobReference",
+        "message": excinfo.value.message,
+        "created_by_job_id": malformed,
+    }
+
+    # the failed call is audited exactly once, with the structured payload
+    assert _audit_count(engine, job.id) == 1
+    with Session(engine) as session:
+        row = session.scalar(select(AuditLog).where(AuditLog.job_id == job.id))
+    assert row is not None
+    assert row.tool_called == "create_purchase_order"
+    assert row.tool_output is not None
+    assert row.tool_output["error"] == "InvalidJobReference"
+    assert row.tool_output["created_by_job_id"] == malformed
+
+    # no purchase_orders row may be created by the failed call
+    with Session(engine) as session:
+        pos = session.scalars(
+            select(PurchaseOrder).where(PurchaseOrder.created_by_job_id == job.id)
+        ).all()
+    assert pos == [], "malformed job id must not create a purchase order"
